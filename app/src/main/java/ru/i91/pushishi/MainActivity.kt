@@ -63,6 +63,8 @@ class MainActivity : Activity() {
         fun button(s: String, onClick: () -> Unit) = Button(this).apply { text = s; isAllCaps = false; setOnClickListener { onClick() } }.also { col.addView(it) }
 
         text(getString(R.string.app_name), 28f, bold = true)
+        val version = packageManager.getPackageInfo(packageName, 0).let { "${it.versionName} (сборка ${it.longVersionCode})" }
+        text("версия $version", 12f)
         val token = store.token
         if (token == null) {
             text("Ваш питомец с pet.91i.ru — на экране телефона. Привяжите приложение к своим питомцам:")

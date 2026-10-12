@@ -22,7 +22,7 @@ import org.json.JSONObject
 class PetWidget : AppWidgetProvider() {
 
     override fun onUpdate(ctx: Context, manager: AppWidgetManager, ids: IntArray) {
-        refresh(ctx)
+        safe(ctx) { refresh(ctx) }
         SyncJob.schedule(ctx) // the system's half-hour wake-up: go and ask the site
     }
 
@@ -30,14 +30,16 @@ class PetWidget : AppWidgetProvider() {
 
     override fun onReceive(ctx: Context, intent: Intent) {
         if (intent.action != TAP) return super.onReceive(ctx, intent)
-        val store = Store(ctx)
-        val egg = store.lastReply?.optJSONObject("egg") != null && store.lastReply?.optJSONObject("pet") == null
-        if (egg) store.warm = store.warm + 1 else store.strokes = store.strokes + 1
         val done = goAsync()
-        show(ctx, render(ctx, store, tapped = true))
-        // strokes go to the site in batches, not one request per tap
-        if (System.currentTimeMillis() - store.lastSent > 30_000) SyncJob.schedule(ctx)
-        Handler(Looper.getMainLooper()).postDelayed({ refresh(ctx); done.finish() }, 2500)
+        safe(ctx) {
+            val store = Store(ctx)
+            val egg = store.lastReply?.optJSONObject("egg") != null && store.lastReply?.optJSONObject("pet") == null
+            if (egg) store.warm = store.warm + 1 else store.strokes = store.strokes + 1
+            show(ctx, render(ctx, store, tapped = true))
+            // strokes go to the site in batches, not one request per tap
+            if (System.currentTimeMillis() - store.lastSent > 30_000) SyncJob.schedule(ctx)
+        }
+        Handler(Looper.getMainLooper()).postDelayed({ safe(ctx) { refresh(ctx) }; done.finish() }, 2500)
     }
 
     companion object {
@@ -45,6 +47,13 @@ class PetWidget : AppWidgetProvider() {
         private val FRAME_IDS = intArrayOf(R.id.f0, R.id.f1, R.id.f2, R.id.f3, R.id.f4, R.id.f5)
 
         fun refresh(ctx: Context) = show(ctx, render(ctx, Store(ctx), tapped = false))
+
+        /** A widget must never take the app down: whatever goes wrong is written to the journal instead. */
+        fun safe(ctx: Context, block: () -> Unit) {
+            try { block() } catch (e: Throwable) {
+                try { Api.journal(ctx, "ошибка виджета: " + e.stackTraceToString().lines().take(6).joinToString(" | ")) } catch (_: Throwable) { }
+            }
+        }
 
         private fun show(ctx: Context, views: RemoteViews) {
             val manager = AppWidgetManager.getInstance(ctx)

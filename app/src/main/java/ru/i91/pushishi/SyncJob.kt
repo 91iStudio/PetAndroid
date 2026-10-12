@@ -15,8 +15,8 @@ import android.graphics.BitmapFactory
 class SyncJob : JobService() {
     override fun onStartJob(params: JobParameters): Boolean {
         Thread {
-            Sync.run(applicationContext)
-            PetWidget.refresh(applicationContext)
+            PetWidget.safe(applicationContext) { Sync.run(applicationContext) }
+            PetWidget.safe(applicationContext) { PetWidget.refresh(applicationContext) }
             jobFinished(params, false)
         }.start()
         return true
