@@ -98,6 +98,7 @@ class MainActivity : Activity() {
                 if (manager.isRequestPinAppWidgetSupported) button("Поставить на главный экран") { manager.requestPinAppWidget(ComponentName(this, PetWidget::class.java), null, null); main.postDelayed({ PetWidget.refresh(this) }, 3000) }
                 text("Или: долгое нажатие на пустом месте главного экрана → «Виджеты» → «Пушиши».", 14f)
             }
+            choices(col, reply)
             button("Обновить сейчас") {
                 Thread { Sync.run(this); PetWidget.refresh(this); main.post { build() } }.start()
             }
@@ -118,6 +119,48 @@ class MainActivity : Activity() {
         }
         // Android 15 draws apps under the status bar: keep the text below it
         setContentView(ScrollView(this).apply { fitsSystemWindows = true; addView(col) })
+    }
+
+    // ───── Whom the phone shows, and how old ─────
+
+    private fun choices(col: LinearLayout, reply: org.json.JSONObject?) {
+        val pets = reply?.optJSONObject("pets") ?: return
+        val list = pets.optJSONArray("list") ?: return
+        if (list.length() == 0) return
+        val chosen = pets.optString("chosen").takeIf { !pets.isNull("chosen") && it.isNotEmpty() }
+        val baby: Boolean? = if (pets.isNull("baby") || !pets.has("baby")) null else pets.optBoolean("baby")
+        val shownId = reply?.optJSONObject("pet")?.optString("id") ?: reply?.optJSONObject("egg")?.optString("id")
+        fun mark(on: Boolean, s: String) = if (on) "✓  $s" else s
+        fun pick(petId: String?, age: Boolean?) {
+            val token = store.token ?: return
+            Thread { Api.choose(this, token, petId, age); Sync.run(this); PetWidget.refresh(this); main.post { if (!isFinishing) build() } }.start()
+        }
+        col.addView(TextView(this).apply { text = "Кто живёт на экране"; textSize = 16f; setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(14), 0, dp(4)) })
+        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun choice(label: String, onClick: () -> Unit) = Button(this).apply { text = label; isAllCaps = false; setOnClickListener { onClick() } }.also { row.addView(it) }
+        choice(mark(chosen == null, "Как на сайте")) { pick(null, baby) }
+        var canBaby = false
+        for (i in 0 until list.length()) {
+            val x = list.getJSONObject(i)
+            val id = x.optString("id")
+            val stage = x.optString("stage")
+            if (id == shownId) canBaby = x.optBoolean("canBeBaby")
+            val label = x.optString("name") + when (stage) { "egg" -> " (яйцо)"; "baby" -> " (малыш)"; else -> "" }
+            choice(mark(chosen == id, label)) { pick(id, baby) }
+        }
+        col.addView(row)
+        if (canBaby) {
+            col.addView(TextView(this).apply { text = "Возраст"; textSize = 16f; setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(10), 0, dp(4)) })
+            val ages = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for ((label, value) in listOf("Как на сайте" to null, "Малышом" to true, "Взрослым" to false)) {
+                ages.addView(Button(this).apply {
+                    text = mark(baby == value, label); isAllCaps = false; textSize = 13f
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    setOnClickListener { pick(chosen, value) }
+                })
+            }
+            col.addView(ages)
+        }
     }
 
     // ───── Pairing through the browser: the site shows «Привязать?», the app waits for the answer ─────

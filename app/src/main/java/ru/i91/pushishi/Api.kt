@@ -59,6 +59,10 @@ object Api {
 
     fun pet(ctx: Context, token: String) = send(ctx, "GET", "/api/desk/pet", null, token)
 
+    /** Whom this phone shows (null — as on the site) and how old (null — as on the site). */
+    fun choose(ctx: Context, token: String, petId: String?, baby: Boolean?) =
+        send(ctx, "POST", "/api/desk/choose", JSONObject().put("petId", petId ?: JSONObject.NULL).put("baby", baby ?: JSONObject.NULL).toString(), token)
+
     fun events(ctx: Context, token: String, strokes: Int, warm: Int) =
         send(ctx, "POST", "/api/desk/events", JSONObject().put("strokes", strokes).put("minutes", 0).put("warm", warm).toString(), token)
 
