@@ -54,6 +54,8 @@ class PetWidget : AppWidgetProvider() {
 
         private fun render(ctx: Context, store: Store, tapped: Boolean): RemoteViews {
             val v = RemoteViews(ctx.packageName, R.layout.widget)
+            // the home screen may reuse the old view: what is not set again would stay from the previous picture
+            v.setViewVisibility(R.id.bubble, View.GONE)
             val reply = store.lastReply
             val pet = reply?.optJSONObject("pet")
             val egg = reply?.optJSONObject("egg")
@@ -72,8 +74,8 @@ class PetWidget : AppWidgetProvider() {
                     val f = { i: Int -> store.frame(i) }
                     when {
                         // asleep: strokes still count, but it does not wake (sleep is up to the site, the same everywhere)
-                        pet.optBoolean("asleep") -> { still(v, f(4)); bubble(v, if (tapped) "мурчит во сне… ♥" else "Zz…", if (tapped) Color.rgb(0xE0, 0x5A, 0x7E) else Color.rgb(0x5A, 0x3D, 0x2B)) }
-                        tapped -> { still(v, f(5)); bubble(v, "♥ ♥ ♥", Color.rgb(0xE0, 0x5A, 0x7E)) }
+                        pet.optBoolean("asleep") -> { still(v, f(4)); bubble(v, if (tapped) "мрр…" else "Zz…") }
+                        tapped -> still(v, f(5)) // just glad: a happy face says it all
                         else -> {
                             // stand, blink, sit — the system flips them
                             val all = listOfNotNull(f(0), f(1), f(9))
@@ -91,7 +93,7 @@ class PetWidget : AppWidgetProvider() {
                 }
                 pet != null -> { still(v, eggOf(pet, 0f)); bubble(v, "${pet.optString("name", "Малыш")} уже вылупился! Картинка рисуется…") }
                 egg != null -> {
-                    if (tapped) { still(v, eggOf(egg, 0f)); bubble(v, "тепло!", Color.rgb(0xE0, 0x5A, 0x7E)) }
+                    if (tapped) still(v, eggOf(egg, 7f))
                     else {
                         flip(v, 450, listOf(eggOf(egg, -7f), eggOf(egg, 0f), eggOf(egg, 7f), eggOf(egg, 0f), eggOf(egg, 0f), eggOf(egg, 0f)))
                         val left = egg.optInt("minutesLeft") - ((System.currentTimeMillis() - store.replyAt) / 60000).toInt()

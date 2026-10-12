@@ -28,12 +28,13 @@ class SyncJob : JobService() {
         /** Ask the system for a trip as soon as there is a network (one at a time). */
         fun schedule(ctx: Context) {
             val js = ctx.getSystemService(JobScheduler::class.java) ?: return
-            js.schedule(
+            // a refused trip must not bring the app down: the next wake-up will ask again
+            try { js.schedule(
                 JobInfo.Builder(1, ComponentName(ctx, SyncJob::class.java))
                     .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                     .setOverrideDeadline(10 * 60 * 1000L)
                     .build()
-            )
+            ) } catch (e: Exception) { Api.journal(ctx, "система не дала запланировать поход на сайт: ${e.javaClass.simpleName}") }
         }
     }
 }
