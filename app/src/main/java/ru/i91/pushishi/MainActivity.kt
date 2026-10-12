@@ -66,7 +66,7 @@ class MainActivity : Activity() {
         val token = store.token
         if (token == null) {
             text("Ваш питомец с pet.91i.ru — на экране телефона. Привяжите приложение к своим питомцам:")
-            text("1. На сайте, где живут питомцы, откройте меню → «Питомец на рабочем столе». Там 6-значный код — введите его здесь:", 15f)
+            text("1. На сайте, где живут питомцы, откройте меню → «Питомец на рабочем столе» (или «Открыть на другом устройстве»). Там 6-значный код — введите его здесь:", 15f)
             val code = EditText(this).apply {
                 inputType = InputType.TYPE_CLASS_NUMBER; hint = "000000"; textSize = 26f; gravity = Gravity.CENTER
                 filters = arrayOf(InputFilter.LengthFilter(6))
@@ -93,7 +93,7 @@ class MainActivity : Activity() {
             store.frame(0)?.let { col.addView(ImageView(this).apply { setImageBitmap(it); adjustViewBounds = true; maxHeight = dp(180) }) }
             val manager = AppWidgetManager.getInstance(this)
             if (manager.getAppWidgetIds(ComponentName(this, PetWidget::class.java)).isEmpty()) {
-                if (manager.isRequestPinAppWidgetSupported) button("Поставить на главный экран") { manager.requestPinAppWidget(ComponentName(this, PetWidget::class.java), null, null) }
+                if (manager.isRequestPinAppWidgetSupported) button("Поставить на главный экран") { manager.requestPinAppWidget(ComponentName(this, PetWidget::class.java), null, null); main.postDelayed({ PetWidget.refresh(this) }, 3000) }
                 text("Или: долгое нажатие на пустом месте главного экрана → «Виджеты» → «Пушиши».", 14f)
             }
             button("Обновить сейчас") {
@@ -114,7 +114,8 @@ class MainActivity : Activity() {
             val t = TextView(this).apply { text = Api.readJournal(this@MainActivity); textSize = 11f; setTextIsSelectable(true); setPadding(dp(16), dp(8), dp(16), dp(8)) }
             AlertDialog.Builder(this).setTitle("Журнал").setView(ScrollView(this).apply { addView(t) }).setPositiveButton("Закрыть", null).show()
         }
-        setContentView(ScrollView(this).apply { addView(col) })
+        // Android 15 draws apps under the status bar: keep the text below it
+        setContentView(ScrollView(this).apply { fitsSystemWindows = true; addView(col) })
     }
 
     // ───── Pairing through the browser: the site shows «Привязать?», the app waits for the answer ─────

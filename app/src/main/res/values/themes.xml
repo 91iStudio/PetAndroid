@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No title bar: the screen has its own big title. Dark phones get the dark one (values-night). -->
+    <style name="App" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">#D8668A</item>
+    </style>
+</resources>
