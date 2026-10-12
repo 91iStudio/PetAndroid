@@ -48,7 +48,7 @@ class Store(private val ctx: Context) {
     /** Frames cut by an older version are cut again (the format changed). */
     fun hasFrames() = File(framesDir, "0.png").exists() && prefs.getInt("framesV", 1) == FRAMES_V
 
-    private companion object { const val FRAMES_V = 2 }
+    private companion object { const val FRAMES_V = 3 } // 3: cut along truly empty columns
 
     /** «Отвязать»: the key, the pet and its pictures are forgotten (the journal stays — it is yours). */
     fun forget() {

@@ -34,7 +34,9 @@ object Art {
         val colSum = IntArray(w)
         for (y in 0 until h) {
             var x = 0
-            while (x < w) { if (solid(x, y)) { rowSum[y]++; colSum[x]++ }; x += 2 }
+            // a sampled pixel counts for its neighbour column too: otherwise every odd column looks empty and the cut
+            // lands on the bare grid line, slicing a paw or a tail of the next pose into this one
+            while (x < w) { if (solid(x, y)) { rowSum[y]++; colSum[x]++; if (x + 1 < w) colSum[x + 1]++ }; x += 2 }
         }
         fun cuts(sum: IntArray, n: Int, size: Int): IntArray {
             val o = IntArray(n + 1); o[n] = size
