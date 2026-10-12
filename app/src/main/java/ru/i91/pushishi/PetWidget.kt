@@ -71,12 +71,16 @@ class PetWidget : AppWidgetProvider() {
                 pet != null && store.hasFrames() -> {
                     val f = { i: Int -> store.frame(i) }
                     when {
+                        // asleep: strokes still count, but it does not wake (sleep is up to the site, the same everywhere)
+                        pet.optBoolean("asleep") -> { still(v, f(4)); bubble(v, if (tapped) "мурчит во сне… ♥" else "Zz…", if (tapped) Color.rgb(0xE0, 0x5A, 0x7E) else Color.rgb(0x5A, 0x3D, 0x2B)) }
                         tapped -> { still(v, f(5)); bubble(v, "♥ ♥ ♥", Color.rgb(0xE0, 0x5A, 0x7E)) }
-                        pet.optBoolean("asleep") -> { still(v, f(4)); bubble(v, "Zz…") }
                         else -> {
                             // stand, blink, sit — the system flips them
-                            val stand = f(0); val blink = f(1); val sit = f(9)
-                            flip(v, 1200, listOf(stand, stand, blink, stand, sit, sit))
+                            val all = listOfNotNull(f(0), f(1), f(9))
+                            if (all.size == 3) {
+                                val (stand, blink, sit) = Art.pad(all)
+                                flip(v, 1200, listOf(stand, stand, blink, stand, sit, sit))
+                            } else still(v, all.firstOrNull())
                             when {
                                 pet.optBoolean("hungry") -> bubble(v, "кушать хочу…")
                                 pet.optBoolean("tired") -> bubble(v, "спатки…")
@@ -101,13 +105,13 @@ class PetWidget : AppWidgetProvider() {
 
         private fun eggOf(o: JSONObject, tilt: Float): Bitmap {
             val look = o.optJSONObject("look")
-            return Art.egg(240, Art.color(look?.optString("base"), Color.rgb(0xF3, 0xD9, 0xB1)), Art.color(look?.optString("mark"), Color.rgb(0x8A, 0x5A, 0x3C)), look?.optString("pattern"), tilt)
+            return Art.egg(200, Art.color(look?.optString("base"), Color.rgb(0xF3, 0xD9, 0xB1)), Art.color(look?.optString("mark"), Color.rgb(0x8A, 0x5A, 0x3C)), look?.optString("pattern"), tilt)
         }
 
         private fun still(v: RemoteViews, b: Bitmap?) {
             v.setViewVisibility(R.id.flipper, View.GONE)
             v.setViewVisibility(R.id.still, View.VISIBLE)
-            if (b != null) v.setImageViewBitmap(R.id.still, b)
+            if (b != null) v.setImageViewBitmap(R.id.still, Art.pad(listOf(b))[0])
         }
 
         private fun flip(v: RemoteViews, interval: Int, frames: List<Bitmap?>) {

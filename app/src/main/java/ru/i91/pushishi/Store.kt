@@ -40,11 +40,15 @@ class Store(private val ctx: Context) {
     fun saveFrames(frames: List<Bitmap>) {
         framesDir.listFiles()?.forEach { it.delete() }
         frames.forEachIndexed { i, b -> File(framesDir, "$i.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+        prefs.edit().putInt("framesV", FRAMES_V).apply()
     }
 
     fun frame(i: Int): Bitmap? = File(framesDir, "$i.png").takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path) }
 
-    fun hasFrames() = File(framesDir, "0.png").exists()
+    /** Frames cut by an older version are cut again (the format changed). */
+    fun hasFrames() = File(framesDir, "0.png").exists() && prefs.getInt("framesV", 1) == FRAMES_V
+
+    private companion object { const val FRAMES_V = 2 }
 
     /** «Отвязать»: the key, the pet and its pictures are forgotten (the journal stays — it is yours). */
     fun forget() {

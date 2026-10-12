@@ -21,8 +21,8 @@ object Art {
 
     /**
      * Cut a sheet into its poses. The picture model does not keep the grid exact, so the cuts go along the emptiest
-     * lines near the ideal ones. Every frame is trimmed, scaled to [height] and put on one common canvas, paws on its
-     * bottom edge, so the pet keeps its size and place from frame to frame.
+     * lines near the ideal ones. Every frame is trimmed and scaled with one scale (the standing pose gets [height]);
+     * the widget puts the frames it shows together on a common canvas with [pad].
      */
     fun cut(sheet: Bitmap, cols: Int, rows: Int, height: Int): List<Bitmap> {
         val w = sheet.width
@@ -63,12 +63,24 @@ object Art {
         }
         // one scale for all frames: the standing pose gets [height]
         val scale = height / trimmed[0].height.toFloat()
-        val scaled = trimmed.map { Bitmap.createScaledBitmap(it, max(1, (it.width * scale).roundToInt()), max(1, (it.height * scale).roundToInt()), true) }
-        val cw = scaled.maxOf { it.width }
-        val ch = scaled.maxOf { it.height }
-        return scaled.map { f ->
+        return trimmed.map { Bitmap.createScaledBitmap(it, max(1, (it.width * scale).roundToInt()), max(1, (it.height * scale).roundToInt()), true) }
+    }
+
+    /**
+     * Frames shown together on one canvas, paws on its bottom edge, so the pet keeps its size and place. All of them
+     * together stay under [budget] bytes: a widget update travels to the home screen in one message, and too big a one
+     * is refused (the app would crash).
+     */
+    fun pad(frames: List<Bitmap>, budget: Int = 450_000): List<Bitmap> {
+        var cw = frames.maxOf { it.width }
+        var ch = frames.maxOf { it.height }
+        val k = kotlin.math.sqrt(budget / (cw * ch * 4f * frames.size)).coerceAtMost(1f)
+        cw = max(1, (cw * k).roundToInt()); ch = max(1, (ch * k).roundToInt())
+        return frames.map { f ->
+            val w = max(1, (f.width * k).roundToInt()); val h = max(1, (f.height * k).roundToInt())
             val out = Bitmap.createBitmap(cw, ch, Bitmap.Config.ARGB_8888)
-            Canvas(out).drawBitmap(f, (cw - f.width) / 2f, (ch - f.height).toFloat(), null)
+            val src = if (k < 1f) Bitmap.createScaledBitmap(f, w, h, true) else f
+            Canvas(out).drawBitmap(src, (cw - w) / 2f, (ch - h).toFloat(), null)
             out
         }
     }
