@@ -1,201 +1,134 @@
 package ru.i91.pushishi
 
+import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.AlertDialog
-import android.appwidget.AppWidgetManager
-import android.content.ComponentName
 import android.content.Intent
-import android.graphics.Typeface
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.text.InputFilter
-import android.text.InputType
-import android.view.Gravity
-import android.view.View
-import android.widget.Button
-import android.widget.EditText
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
 
-/** The app's only screen: pair with the site, put the pet on the home screen, see what the app has sent. */
+/**
+ * The game itself: the same pet.91i.ru, inside the app (one app instead of a site icon and an app with the same name).
+ * Only the game's own address opens here; any other link goes to the browser. The game can open the widget settings,
+ * and tells the app its key so the widgets link by themselves — the key stays on this phone.
+ */
 class MainActivity : Activity() {
+    private lateinit var web: WebView
     private lateinit var store: Store
-    private val main = Handler(Looper.getMainLooper())
-    private var nonce: String? = null
-    private var nonceUntil = 0L
-    private var asked = false
 
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         store = Store(this)
-        nonce = state?.getString("nonce")
-        nonceUntil = state?.getLong("nonceUntil") ?: 0
-        build()
+        web = WebView(this).apply {
+            setBackgroundColor(Color.rgb(0xF3, 0xD9, 0xB1))
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = false
+            settings.textZoom = 100 // the game lays itself out; the system's big font would break the room
+            settings.userAgentString = settings.userAgentString + " PushishiApp/" + version()
+            webChromeClient = WebChromeClient()
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val u = request.url
+                    if (u.scheme == "https" && u.host == HOST) return false
+                    try { startActivity(Intent(Intent.ACTION_VIEW, u)) } catch (_: Exception) { }
+                    return true
+                }
+            }
+            addJavascriptInterface(Bridge(), "PushishiApp")
+        }
+        // Android 15 draws apps under the status bar: keep the game below it
+        setContentView(FrameLayout(this).apply {
+            fitsSystemWindows = true
+            setBackgroundColor(Color.rgb(0xF3, 0xD9, 0xB1))
+            addView(web)
+        })
+        if (state != null) web.restoreState(state)
+        if (state == null || web.url == null) web.loadUrl(address(intent))
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.data != null) web.loadUrl(address(intent))
+    }
+
+    /** pushishi://move/123456 — the site in the phone's browser hands the pets over to the app with a one-time code. */
+    private fun address(intent: Intent?): String {
+        val d: Uri? = intent?.data
+        val code = d?.takeIf { it.scheme == "pushishi" && it.host == "move" }?.lastPathSegment?.filter { it.isDigit() }
+        return if (code != null && code.length == 6) "${Api.SITE}/#move=$code" else "${Api.SITE}/"
     }
 
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out)
-        out.putString("nonce", nonce)
-        out.putLong("nonceUntil", nonceUntil)
+        web.saveState(out)
     }
 
     override fun onResume() {
         super.onResume()
-        if (nonce != null) poll() // back from the browser: has the site confirmed?
+        web.onResume()
+        web.resumeTimers()
     }
 
     override fun onPause() {
         super.onPause()
-        main.removeCallbacksAndMessages(null)
+        web.onPause()
+        web.pauseTimers()
+        // back on the home screen: the widgets catch up with what happened in the game
+        SyncJob.schedule(this)
     }
 
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun build() {
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(28), dp(24), dp(28)) }
-        fun text(s: String, size: Float = 16f, bold: Boolean = false) = TextView(this).apply {
-            text = s; textSize = size; if (bold) setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(6), 0, dp(6))
-        }.also { col.addView(it) }
-        fun button(s: String, onClick: () -> Unit) = Button(this).apply { text = s; isAllCaps = false; setOnClickListener { onClick() } }.also { col.addView(it) }
-
-        text(getString(R.string.app_name), 28f, bold = true)
-        val version = packageManager.getPackageInfo(packageName, 0).let { "${it.versionName} (сборка ${it.longVersionCode})" }
-        text("версия $version", 12f)
-        val token = store.token
-        if (token == null) {
-            text("Ваш питомец с pet.91i.ru — на экране телефона. Привяжите приложение к своим питомцам:")
-            text("1. На сайте, где живут питомцы, откройте меню → «Питомец на рабочем столе» (или «Открыть на другом устройстве»). Там 6-значный код — введите его здесь:", 15f)
-            val code = EditText(this).apply {
-                inputType = InputType.TYPE_CLASS_NUMBER; hint = "000000"; textSize = 26f; gravity = Gravity.CENTER
-                filters = arrayOf(InputFilter.LengthFilter(6))
-            }
-            col.addView(code)
-            val status = TextView(this)
-            button("Привязать по коду") {
-                val c = code.text.toString().filter { it.isDigit() }
-                if (c.length != 6) { status.text = "В коде 6 цифр"; return@button }
-                status.text = "Проверяю…"
-                Thread {
-                    val r = Api.pair(this, c)
-                    val t = r.json?.optString("token")?.takeIf { r.ok && it.isNotEmpty() }
-                    main.post { if (t != null) paired(t) else status.text = r.json?.optString("error")?.takeIf { it.isNotEmpty() } ?: "Нет связи с сайтом" }
-                }.start()
-            }
-            col.addView(status)
-            text("2. Или, если питомцы уже открыты в браузере этого телефона:", 15f)
-            button("Открыть сайт и привязать") { startLink(status) }
-        } else {
-            val reply = store.lastReply
-            val name = reply?.optJSONObject("pet")?.optString("name")
-            text(if (name != null) "$name живёт на экране телефона." else if (reply?.optJSONObject("egg") != null) "Пока малыш в яйце — оно лежит на экране телефона. Погладьте его пальцем, чтобы согреть." else "Привязано. Сейчас спрошу сайт, как дела.")
-            store.frame(0)?.let { col.addView(ImageView(this).apply { setImageBitmap(it); adjustViewBounds = true; maxHeight = dp(180) }) }
-            val manager = AppWidgetManager.getInstance(this)
-            if (manager.getAppWidgetIds(ComponentName(this, PetWidget::class.java)).isEmpty()) {
-                if (manager.isRequestPinAppWidgetSupported) button("Поставить на главный экран") { manager.requestPinAppWidget(ComponentName(this, PetWidget::class.java), null, null); main.postDelayed({ PetWidget.refresh(this) }, 3000) }
-                text("Или: долгое нажатие на пустом месте главного экрана → «Виджеты» → «Пушиши».", 14f)
-            }
-            choices(col, reply)
-            button("Обновить сейчас") {
-                Thread { Sync.run(this); PetWidget.refresh(this); main.post { build() } }.start()
-            }
-            button("Отвязать этот телефон") {
-                AlertDialog.Builder(this).setMessage("Отвязать? Питомец останется на сайте, а с телефона пропадёт.")
-                    .setPositiveButton("Отвязать") { _, _ -> store.forget(); PetWidget.refresh(this); build() }
-                    .setNegativeButton("Не надо", null).show()
-            }
-            if (reply == null && !asked) { asked = true; Thread { Sync.run(this); PetWidget.refresh(this); main.post { if (!isFinishing) build() } }.start() }
-        }
-
-        text("")
-        text("Что приложение делает: раз в полчаса (когда телефон сам будит виджет) спрашивает pet.91i.ru, как дела у питомца, " +
-            "и передаёт, сколько раз вы его погладили. Больше ничего не читает и никуда не отправляет. Код открыт.", 13f)
-        button("Что приложение отправляло") {
-            val t = TextView(this).apply { text = Api.readJournal(this@MainActivity); textSize = 11f; setTextIsSelectable(true); setPadding(dp(16), dp(8), dp(16), dp(8)) }
-            AlertDialog.Builder(this).setTitle("Журнал").setView(ScrollView(this).apply { addView(t) }).setPositiveButton("Закрыть", null).show()
-        }
-        // Android 15 draws apps under the status bar: keep the text below it
-        setContentView(ScrollView(this).apply { fitsSystemWindows = true; addView(col) })
-    }
-
-    // ───── Whom the phone shows, and how old ─────
-
-    private fun choices(col: LinearLayout, reply: org.json.JSONObject?) {
-        val pets = reply?.optJSONObject("pets") ?: return
-        val list = pets.optJSONArray("list") ?: return
-        if (list.length() == 0) return
-        val chosen = pets.optString("chosen").takeIf { !pets.isNull("chosen") && it.isNotEmpty() }
-        val baby: Boolean? = if (pets.isNull("baby") || !pets.has("baby")) null else pets.optBoolean("baby")
-        val shownId = reply?.optJSONObject("pet")?.optString("id") ?: reply?.optJSONObject("egg")?.optString("id")
-        fun mark(on: Boolean, s: String) = if (on) "✓  $s" else s
-        fun pick(petId: String?, age: Boolean?) {
-            val token = store.token ?: return
-            Thread { Api.choose(this, token, petId, age); Sync.run(this); PetWidget.refresh(this); main.post { if (!isFinishing) build() } }.start()
-        }
-        col.addView(TextView(this).apply { text = "Кто живёт на экране"; textSize = 16f; setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(14), 0, dp(4)) })
-        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        fun choice(label: String, onClick: () -> Unit) = Button(this).apply { text = label; isAllCaps = false; setOnClickListener { onClick() } }.also { row.addView(it) }
-        choice(mark(chosen == null, "Как на сайте")) { pick(null, baby) }
-        var canBaby = false
-        for (i in 0 until list.length()) {
-            val x = list.getJSONObject(i)
-            val id = x.optString("id")
-            val stage = x.optString("stage")
-            if (id == shownId) canBaby = x.optBoolean("canBeBaby")
-            val label = x.optString("name") + when (stage) { "egg" -> " (яйцо)"; "baby" -> " (малыш)"; else -> "" }
-            choice(mark(chosen == id, label)) { pick(id, baby) }
-        }
-        col.addView(row)
-        if (canBaby) {
-            col.addView(TextView(this).apply { text = "Возраст"; textSize = 16f; setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(10), 0, dp(4)) })
-            val ages = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            for ((label, value) in listOf("Как на сайте" to null, "Малышом" to true, "Взрослым" to false)) {
-                ages.addView(Button(this).apply {
-                    text = mark(baby == value, label); isAllCaps = false; textSize = 13f
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    setOnClickListener { pick(chosen, value) }
-                })
-            }
-            col.addView(ages)
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        // «back» closes the game's open window first; with nothing open the app goes to the background
+        web.evaluateJavascript("window.appBack ? window.appBack() : false") { handled ->
+            if (handled != "true") { if (web.canGoBack()) web.goBack() else super@MainActivity.onBackPressed() }
         }
     }
 
-    // ───── Pairing through the browser: the site shows «Привязать?», the app waits for the answer ─────
+    private fun version() = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "dev" } catch (_: Exception) { "dev" }
 
-    private fun startLink(status: TextView) {
-        status.text = "Открываю сайт…"
-        Thread {
-            val n = Api.start(this).json?.optString("nonce")?.takeIf { it.isNotEmpty() }
-            main.post {
-                if (n == null) { status.text = "Нет связи с сайтом"; return@post }
-                nonce = n; nonceUntil = System.currentTimeMillis() + 15 * 60 * 1000
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${Api.SITE}/#desk=$n")))
-            }
-        }.start()
+    /** What the game may ask of the app. Nothing else is reachable from the page. */
+    inner class Bridge {
+        @JavascriptInterface
+        fun widgets() = runOnUiThread { startActivity(Intent(this@MainActivity, WidgetsActivity::class.java)) }
+
+        @JavascriptInterface
+        fun version(): String = this@MainActivity.version()
+
+        /**
+         * The game's key on this phone and whether it has pets yet. The widgets are linked to these pets by themselves
+         * (once — and again only if the game here switches to other pets).
+         */
+        @JavascriptInterface
+        fun account(key: String, hasPets: Boolean) {
+            if (!hasPets || key.length !in 20..100) return
+            val mark = Store.fingerprint(key)
+            if (store.linkedWith == mark && store.token != null) return
+            Thread { PetWidget.safe(applicationContext) { link(key, mark) } }.start()
+        }
     }
 
-    private fun poll() {
-        val n = nonce ?: return
-        if (System.currentTimeMillis() > nonceUntil) { nonce = null; return }
-        Thread {
-            val j = Api.poll(this, n).json
-            main.post {
-                val t = j?.optString("token")?.takeIf { it.isNotEmpty() }
-                when {
-                    t != null -> { nonce = null; Api.journal(this, "привязано через сайт"); paired(t) }
-                    j?.optBoolean("expired") == true -> nonce = null
-                    else -> main.postDelayed({ poll() }, 2000)
-                }
-            }
-        }.start()
-    }
-
-    private fun paired(token: String) {
+    @Synchronized
+    private fun link(key: String, mark: String) {
+        if (store.linkedWith == mark && store.token != null) return
+        val nonce = Api.start(this).json?.optString("nonce")?.takeIf { it.isNotEmpty() } ?: return
+        if (!Api.claim(this, key, nonce).ok) return
+        val token = Api.poll(this, nonce).json?.optString("token")?.takeIf { it.isNotEmpty() } ?: return
         store.token = token
-        asked = false
-        build()
+        store.linkedWith = mark
+        Api.journal(this, "виджеты привязаны к питомцам из игры")
+        Sync.run(this)
+        PetWidget.refresh(this)
     }
+
+    private companion object { const val HOST = "pet.91i.ru" }
 }

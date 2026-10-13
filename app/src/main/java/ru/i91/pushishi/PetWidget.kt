@@ -16,7 +16,8 @@ import android.widget.RemoteViews
 import org.json.JSONObject
 
 /**
- * The pet on the home screen. It only shows what the last trip to the site brought; a few frames take turns by
+ * A pet on the home screen. There may be several, each showing its own pet (chosen when it is put there, or later with a
+ * long press → «Настроить»). It only shows what the last trip to the site brought; a few frames take turns by
  * themselves (the system flips them, the app is not running). A tap strokes the pet (or warms the egg).
  */
 class PetWidget : AppWidgetProvider() {
@@ -28,25 +29,53 @@ class PetWidget : AppWidgetProvider() {
 
     override fun onEnabled(ctx: Context) = SyncJob.schedule(ctx)
 
+    override fun onDeleted(ctx: Context, ids: IntArray) {
+        val store = Store(ctx)
+        ids.forEach { store.dropWidget(it) }
+    }
+
     override fun onReceive(ctx: Context, intent: Intent) {
-        if (intent.action != TAP) return super.onReceive(ctx, intent)
-        val done = goAsync()
-        safe(ctx) {
-            val store = Store(ctx)
-            val egg = store.lastReply?.optJSONObject("egg") != null && store.lastReply?.optJSONObject("pet") == null
-            if (egg) store.warm = store.warm + 1 else store.strokes = store.strokes + 1
-            show(ctx, render(ctx, store, tapped = true))
-            // strokes go to the site in batches, not one request per tap
-            if (System.currentTimeMillis() - store.lastSent > 30_000) SyncJob.schedule(ctx)
+        when (intent.action) {
+            TAP -> {
+                val id = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+                val done = goAsync()
+                safe(ctx) {
+                    val store = Store(ctx)
+                    val reply = store.reply(store.slotOf(id))
+                    val pet = reply?.optJSONObject("pet")
+                    val egg = reply?.optJSONObject("egg")
+                    if (pet == null && egg != null) store.addWarm(egg.optString("id"))
+                    else if (pet != null) store.addStroke(pet.optString("id"))
+                    showOne(ctx, id, render(ctx, store, id, tapped = true))
+                    // strokes go to the site in batches, not one request per tap
+                    if (System.currentTimeMillis() - store.lastSent > 30_000) SyncJob.schedule(ctx)
+                }
+                Handler(Looper.getMainLooper()).postDelayed({ safe(ctx) { refresh(ctx) }; done.finish() }, 2500)
+            }
+            PINNED -> safe(ctx) {
+                // a widget put on the screen from the app: it shows the pet it was put there for
+                val id = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+                if (id != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                    Store(ctx).setWidget(id, intent.getStringExtra("pet"), null)
+                    SyncJob.schedule(ctx)
+                    refresh(ctx)
+                }
+            }
+            else -> super.onReceive(ctx, intent)
         }
-        Handler(Looper.getMainLooper()).postDelayed({ safe(ctx) { refresh(ctx) }; done.finish() }, 2500)
     }
 
     companion object {
         const val TAP = "ru.i91.pushishi.TAP"
+        const val PINNED = "ru.i91.pushishi.PINNED"
         private val FRAME_IDS = intArrayOf(R.id.f0, R.id.f1, R.id.f2, R.id.f3, R.id.f4, R.id.f5)
 
-        fun refresh(ctx: Context) = show(ctx, render(ctx, Store(ctx), tapped = false))
+        fun ids(ctx: Context): IntArray = AppWidgetManager.getInstance(ctx).getAppWidgetIds(ComponentName(ctx, PetWidget::class.java))
+
+        fun refresh(ctx: Context) {
+            val store = Store(ctx)
+            for (id in ids(ctx)) showOne(ctx, id, render(ctx, store, id, tapped = false))
+        }
 
         /** A widget must never take the app down: whatever goes wrong is written to the journal instead. */
         fun safe(ctx: Context, block: () -> Unit) {
@@ -55,17 +84,24 @@ class PetWidget : AppWidgetProvider() {
             }
         }
 
-        private fun show(ctx: Context, views: RemoteViews) {
+        /** Asks the home screen to put one more widget there, showing this pet (the home screen asks the person first). */
+        fun pin(ctx: Context, petId: String?): Boolean {
             val manager = AppWidgetManager.getInstance(ctx)
-            val ids = manager.getAppWidgetIds(ComponentName(ctx, PetWidget::class.java))
-            if (ids.isNotEmpty()) manager.updateAppWidget(ids, views)
+            if (!manager.isRequestPinAppWidgetSupported) return false
+            val back = PendingIntent.getBroadcast(ctx, (petId ?: "-").hashCode(),
+                Intent(ctx, PetWidget::class.java).setAction(PINNED).putExtra("pet", petId),
+                PendingIntent.FLAG_UPDATE_CURRENT or (if (android.os.Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0))
+            return manager.requestPinAppWidget(ComponentName(ctx, PetWidget::class.java), null, back)
         }
 
-        private fun render(ctx: Context, store: Store, tapped: Boolean): RemoteViews {
+        private fun showOne(ctx: Context, id: Int, views: RemoteViews) = AppWidgetManager.getInstance(ctx).updateAppWidget(id, views)
+
+        private fun render(ctx: Context, store: Store, id: Int, tapped: Boolean): RemoteViews {
             val v = RemoteViews(ctx.packageName, R.layout.widget)
             // the home screen may reuse the old view: what is not set again would stay from the previous picture
             v.setViewVisibility(R.id.bubble, View.GONE)
-            val reply = store.lastReply
+            val slot = store.slotOf(id)
+            val reply = store.reply(slot)
             val pet = reply?.optJSONObject("pet")
             val egg = reply?.optJSONObject("egg")
 
@@ -75,14 +111,15 @@ class PetWidget : AppWidgetProvider() {
                 v.setOnClickPendingIntent(R.id.root, PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
                 return v
             }
-            v.setOnClickPendingIntent(R.id.root, PendingIntent.getBroadcast(ctx, 1, Intent(ctx, PetWidget::class.java).setAction(TAP), PendingIntent.FLAG_IMMUTABLE))
+            v.setOnClickPendingIntent(R.id.root, PendingIntent.getBroadcast(ctx, id,
+                Intent(ctx, PetWidget::class.java).setAction(TAP).putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
 
             when {
-                pet != null && pet.optBoolean("away") -> { still(v, store.frame(6) ?: eggOf(pet, 0f)); bubble(v, "в гостях у бабушки") }
-                pet != null && store.hasFrames() -> {
-                    val f = { i: Int -> store.frame(i) }
+                pet != null && pet.optBoolean("away") -> { still(v, store.frame(slot, 6) ?: eggOf(pet, 0f)); bubble(v, "в гостях у бабушки") }
+                pet != null && store.hasFrames(slot) -> {
+                    val f = { i: Int -> store.frame(slot, i) }
                     when {
-                        // asleep: strokes still count, but it does not wake (sleep is up to the site, the same everywhere)
+                        // asleep: strokes still count, but it does not wake (sleep is up to the game, the same everywhere)
                         pet.optBoolean("asleep") -> { still(v, f(4)); bubble(v, if (tapped) "мрр…" else "Zz…") }
                         tapped -> still(v, f(5)) // just glad: a happy face says it all
                         else -> {
@@ -105,8 +142,8 @@ class PetWidget : AppWidgetProvider() {
                     if (tapped) still(v, eggOf(egg, 7f))
                     else {
                         flip(v, 450, listOf(eggOf(egg, -7f), eggOf(egg, 0f), eggOf(egg, 7f), eggOf(egg, 0f), eggOf(egg, 0f), eggOf(egg, 0f)))
-                        val left = egg.optInt("minutesLeft") - ((System.currentTimeMillis() - store.replyAt) / 60000).toInt()
-                        bubble(v, if (left <= 0) "пора вылупляться! открой сайт" else "вылуплюсь через ${left / 60} ч ${left % 60} мин")
+                        val left = egg.optInt("minutesLeft") - ((System.currentTimeMillis() - store.replyAt(slot)) / 60000).toInt()
+                        bubble(v, if (left <= 0) "пора вылупляться! открой игру" else "вылуплюсь через ${left / 60} ч ${left % 60} мин")
                     }
                 }
                 else -> { still(v, BitmapFactory.decodeResource(ctx.resources, R.mipmap.ic_launcher)); bubble(v, reply?.optString("message")?.takeIf { it.isNotEmpty() } ?: "загружаю…") }

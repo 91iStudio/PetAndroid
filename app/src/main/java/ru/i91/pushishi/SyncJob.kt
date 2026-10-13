@@ -47,28 +47,32 @@ object Sync {
     fun run(ctx: Context): Boolean {
         val store = Store(ctx)
         val token = store.token ?: return false
-        val strokes = store.strokes
-        val warm = store.warm
-        if (strokes > 0 || warm > 0) {
-            if (Api.events(ctx, token, strokes, warm).ok) {
-                store.strokes = maxOf(0, store.strokes - strokes)
-                store.warm = maxOf(0, store.warm - warm)
-                store.lastSent = System.currentTimeMillis()
-            }
+        // strokes and warmth go to the pet they were given to
+        for (petId in store.pending()) {
+            val strokes = store.strokes(petId)
+            val warm = store.warm(petId)
+            if (Api.events(ctx, token, petId, strokes, warm).ok) { store.sent(petId, strokes, warm); store.lastSent = System.currentTimeMillis() }
         }
-        val r = Api.pet(ctx, token)
-        if (r.status == 401) { store.forget(); return false } // unpaired on the site («Сменить ключ»)
-        val json = r.json ?: return false
-        if (!r.ok) return false
-        store.lastReply = json
-        val sheet = json.optJSONObject("pet")?.optString("sheet")?.takeIf { it.isNotEmpty() && it != "null" }
-        if (sheet != null && (sheet != store.sheetUrl || !store.hasFrames())) {
-            val bytes = Api.download(ctx, sheet) ?: return true
-            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return true
+        // one trip per choice the widgets show (several widgets of the same pet share it), and the app's own
+        val slots = linkedSetOf(Store.DEFAULT)
+        for (id in PetWidget.ids(ctx)) slots += store.slotOf(id)
+        store.keepOnly(slots)
+        for (slot in slots) {
+            val petId = slot.substringBeforeLast('.').takeIf { it != "-" }
+            val baby = when (slot.substringAfterLast('.')) { "b" -> true; "a" -> false; else -> null }
+            val r = Api.pet(ctx, token, petId, baby)
+            if (r.status == 401) { store.forget(); return false } // unpaired on the site («Сменить ключ»)
+            val json = r.json ?: continue
+            if (!r.ok) continue
+            store.setReply(slot, json)
+            val sheet = json.optJSONObject("pet")?.optString("sheet")?.takeIf { it.isNotEmpty() && it != "null" } ?: continue
+            if (sheet == store.sheetUrl(slot) && store.hasFrames(slot)) continue
+            val bytes = Api.download(ctx, sheet) ?: continue
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
             val p = json.getJSONObject("pet")
-            store.saveFrames(Art.cut(bmp, p.optInt("cols", 4), p.optInt("rows", 3), FRAME_HEIGHT))
+            store.saveFrames(slot, Art.cut(bmp, p.optInt("cols", 4), p.optInt("rows", 3), FRAME_HEIGHT))
             bmp.recycle()
-            store.sheetUrl = sheet
+            store.setSheetUrl(slot, sheet)
         }
         return true
     }

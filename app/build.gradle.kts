@@ -44,6 +44,9 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
+    // «back» asks the game page first and calls the system's back only when the page has nothing to close
+    lint { disable += "MissingSuperCall" }
+
     // no Google libraries, no trackers: only Android itself and the Kotlin standard library
     dependenciesInfo {
         includeInApk = false
