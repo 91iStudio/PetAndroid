@@ -3,5 +3,7 @@
     <!-- No title bar: the screen has its own big title. Dark phones get the dark one (values-night). -->
     <style name="App" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:colorAccent">#D8668A</item>
+        <!-- the game page has its own colours: phones that darken apps by themselves would paint its buttons white -->
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>

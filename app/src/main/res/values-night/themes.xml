@@ -2,5 +2,7 @@
 <resources>
     <style name="App" parent="android:Theme.Material.NoActionBar">
         <item name="android:colorAccent">#F08AA8</item>
+        <!-- the game page has its own colours: phones that darken apps by themselves would paint its buttons white -->
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>

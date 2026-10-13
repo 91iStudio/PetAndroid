@@ -5,10 +5,12 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -33,6 +35,9 @@ class MainActivity : Activity() {
             settings.mediaPlaybackRequiresUserGesture = false
             settings.textZoom = 100 // the game lays itself out; the system's big font would break the room
             settings.userAgentString = settings.userAgentString + " PushishiApp/" + version()
+            // the page is light only: no automatic darkening (some phones, e.g. Black Shark, turned its pink buttons white)
+            if (Build.VERSION.SDK_INT >= 33) settings.isAlgorithmicDarkeningAllowed = false
+            else if (Build.VERSION.SDK_INT >= 29) noForceDark(settings)
             webChromeClient = WebChromeClient()
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -93,6 +98,10 @@ class MainActivity : Activity() {
             if (handled != "true") { if (web.canGoBack()) web.goBack() else super@MainActivity.onBackPressed() }
         }
     }
+
+    @Suppress("DEPRECATION")
+    @android.annotation.TargetApi(29)
+    private fun noForceDark(s: WebSettings) { s.forceDark = WebSettings.FORCE_DARK_OFF }
 
     private fun version() = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "dev" } catch (_: Exception) { "dev" }
 
